@@ -41,7 +41,7 @@ use crate::{
     line_index::{LineEndings, LineIndex},
     lsp::{from_proto, to_proto::url_from_abs_path},
     lsp_ext,
-    main_loop::Task,
+    main_loop::{SubjectSelection, Task},
     mem_docs::MemDocs,
     op_queue::{Cause, OpQueue},
     priming_scope, reload,
@@ -202,6 +202,8 @@ pub(crate) struct GlobalState {
 
     pub(crate) minicore: MiniCoreRustAnalyzerInternalOnly,
     pub(crate) last_gc_revision: Revision,
+
+    pub(crate) last_subject: Option<SubjectSelection>,
 }
 
 // FIXME: This should move to the VFS once the rewrite is done.
@@ -267,6 +269,7 @@ impl GlobalState {
         let last_gc_revision = analysis_host.raw_database().nonce_and_revision().1;
 
         let mut this = GlobalState {
+            last_subject: None,
             sender,
             req_queue: ReqQueue::default(),
             task_pool,
