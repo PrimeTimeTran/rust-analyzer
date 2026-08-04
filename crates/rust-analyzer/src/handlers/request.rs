@@ -444,6 +444,7 @@ pub(crate) fn handle_on_enter(
     snap: GlobalStateSnapshot,
     params: lsp_types::TextDocumentPositionParams,
 ) -> anyhow::Result<Option<Vec<lsp_ext::SnippetTextEdit>>> {
+    eprintln!("handle_on_enter");
     let _p = tracing::info_span!("handle_on_enter").entered();
     let position = try_default!(from_proto::file_position(&snap, &params)?);
     let edit = match snap.analysis.on_enter(position)? {
@@ -520,6 +521,7 @@ pub(crate) fn handle_document_diagnostics(
     snap: GlobalStateSnapshot,
     params: lsp_types::DocumentDiagnosticParams,
 ) -> anyhow::Result<lsp_types::DocumentDiagnosticReport> {
+    eprintln!("handle_document_diagnostics");
     let file_id = match from_proto::file_id(&snap, &params.text_document.uri)? {
         Some(it) => it,
         None => return Ok(empty_diagnostic_report()),
@@ -1838,6 +1840,18 @@ pub(crate) fn handle_inlay_hints(
             })
             .collect::<Cancellable<Vec<_>>>()?,
     ))
+    // use lsp_types::InlayHintKind;
+    // eprintln!("MY FORK: handle_inlay_hints called");
+    // Ok(Some(vec![InlayHint {
+    //     position: params.range.start,
+    //     label: " OWNERSHIP".into(),
+    //     text_edits: None,
+    //     tooltip: Some("test from forked rust-analyzer".into()),
+    //     padding_left: Some(true),
+    //     padding_right: Some(true),
+    //     data: None,
+    //     kind: Some(InlayHintKind::Type),
+    // }]))
 }
 
 pub(crate) fn handle_inlay_hints_resolve(
@@ -2206,6 +2220,70 @@ pub(crate) fn handle_view_recursive_memory_layout(
             })
             .collect(),
     }))
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SubjectAnalysis {
+    pub file_id: FileId,
+    pub line: u32,
+}
+
+pub(crate) fn dev_fixtures(target_line: u32) -> Vec<lsp_types::Diagnostic> {
+    vec![
+        dev_add_diagnostic(
+            target_line,
+            0,
+            5,
+            lsp_types::DiagnosticSeverity::Error.into(),
+            "OWNERSHIP",
+            "AST node owns value here",
+        ),
+        dev_add_diagnostic(
+            target_line + 1,
+            0,
+            5,
+            lsp_types::DiagnosticSeverity::Warning.into(),
+            "BORROW",
+            "Possible borrow relationship",
+        ),
+        dev_add_diagnostic(
+            target_line + 2,
+            0,
+            5,
+            lsp_types::DiagnosticSeverity::Hint.into(),
+            "TYPE",
+            "Inferred type: Unknown",
+        ),
+        dev_add_diagnostic(
+            target_line + 3,
+            0,
+            5,
+            lsp_types::DiagnosticSeverity::Information.into(),
+            "SYMBOL",
+            "Symbol resolution: SymId(42)",
+        ),
+    ]
+}
+
+pub(crate) fn dev_add_diagnostic(
+    line: u32,
+    start: u32,
+    end: u32,
+    severity: lsp_types::DiagnosticSeverity,
+    code: &str,
+    message: &str,
+) -> lsp_types::Diagnostic {
+    lsp_types::Diagnostic {
+        range: lsp_types::Range {
+            start: lsp_types::Position { line, character: start },
+            end: lsp_types::Position { line, character: end },
+        },
+        severity: Some(severity.into()),
+        code: Some(lsp_types::Code::String(code.into())),
+        source: Some("loi-fork".into()),
+        message: message.into(),
+        ..Default::default()
+    }
 }
 
 fn to_command_link(command: lsp_types::Command, tooltip: String) -> lsp_ext::CommandLink {

@@ -38,7 +38,7 @@ impl fmt::Display for VersionInfo {
 pub const fn version() -> VersionInfo {
     let version = match option_env!("CFG_RELEASE") {
         Some(x) => x,
-        None => "0.0.0",
+        None => "0.0.0-loi-fork",
     };
 
     let release_channel = option_env!("CFG_RELEASE_CHANNEL");

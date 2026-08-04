@@ -109,8 +109,16 @@ pub(crate) enum DiagnosticsTaskKind {
     Semantic(DiagnosticsGeneration, Vec<(FileId, Vec<lsp_types::Diagnostic>)>),
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SubjectSelection {
+    pub column: u32,
+    pub file_id: FileId,
+    pub line: u32,
+    pub offset: syntax::TextSize,
+}
 #[derive(Debug)]
 pub(crate) enum Task {
+    AnalyzeSubject(SubjectSelection),
     Response(lsp_server::Response),
     DiscoverLinkedProjects(DiscoverProjectParam),
     Retry(lsp_server::Request),
@@ -646,6 +654,30 @@ impl GlobalState {
         }
     }
 
+    fn task_analyze_subject(&mut self, subject: SubjectSelection) {
+        self.task_pool.handle.spawn_with_sender(ThreadIntent::Worker, {
+            move |sender| {
+                sender.send(Task::AnalyzeSubject(subject)).unwrap();
+            }
+        });
+    }
+    #[allow(unused_variables)]
+    fn subject_diagnostics_add(&mut self, subject: SubjectSelection) {
+        // eprintln!("subject_diagnostics: {:?}", subject);
+        let diagnostics = crate::handlers::request::dev_fixtures(subject.line);
+        let uri = file_id_to_url(&self.vfs.read().0, subject.file_id);
+        let version = from_proto::vfs_path(&uri)
+            .ok()
+            .and_then(|path| self.mem_docs.get(&path).map(|it| it.version));
+        // eprintln!(
+        //     "publishing {} diagnostics at line {}, column {}",
+        //     diagnostics.len(),
+        //     subject.line,
+        //     subject.column
+        // );
+        self.publish_diagnostics(uri, version, vec![]);
+    }
+
     fn prime_caches(&mut self, cause: String) {
         let scope = self.compute_priming_scope();
         tracing::debug!(%cause, scope_size = scope.len(), "will prime caches");
@@ -667,6 +699,7 @@ impl GlobalState {
     }
 
     fn update_diagnostics(&mut self) {
+        // eprintln!("update_diagnostics");
         let db = self.analysis_host.raw_database();
         let generation = self.diagnostics.next_generation();
         let subscriptions = {
@@ -970,6 +1003,9 @@ impl GlobalState {
             Task::BuildDepsHaveChanged => self.build_deps_changed = true,
             Task::DiscoverTest(tests) => {
                 self.send_notification::<lsp_ext::DiscoveredTestsNotification>(tests);
+            }
+            Task::AnalyzeSubject(subject) => {
+                self.subject_diagnostics_add(subject);
             }
         }
         cancellation_time
@@ -1355,6 +1391,27 @@ impl GlobalState {
             .on_sync_mut::<lsp_ext::RebuildProcMacrosRequest>(handlers::handle_proc_macros_rebuild)
             .on_sync_mut::<lsp_ext::MemoryUsageRequest>(handlers::handle_memory_usage)
             .on_sync_mut::<lsp_ext::RunTestRequest>(handlers::handle_run_test)
+            .on_sync_mut::<lsp_types::DocumentHighlightRequest>(
+                |state, params| {
+                    let snap = state.snapshot();
+                    let position =
+                        from_proto::file_position(
+                            &snap,
+                            &params.text_document_position_params,
+                        )?
+                        .unwrap();
+                    let line_index = snap.file_line_index(position.file_id)?;
+                    let line_col = line_index.index.line_col(position.offset);
+                    let subject = SubjectSelection {
+                        file_id: position.file_id,
+                        offset: position.offset,
+                        line: line_col.line,
+                        column: line_col.col,
+                    };
+                    state.task_analyze_subject(subject);
+                    handlers::handle_document_highlight(snap, params)
+                }
+            )
             // Request handlers which are related to the user typing
             // are run on the main thread to reduce latency:
             .on_sync::<lsp_ext::JoinLinesRequest>(handlers::handle_join_lines)
@@ -1403,7 +1460,7 @@ impl GlobalState {
             .on::<NO_RETRY, lsp_types::PrepareRenameRequest>(handlers::handle_prepare_rename)
             .on::<NO_RETRY, lsp_types::RenameRequest>(handlers::handle_rename)
             .on::<NO_RETRY, lsp_types::ReferencesRequest>(handlers::handle_references)
-            .on::<NO_RETRY, lsp_types::DocumentHighlightRequest>(handlers::handle_document_highlight)
+            // .on::<NO_RETRY, lsp_types::DocumentHighlightRequest>(handlers::handle_document_highlight)
             .on::<NO_RETRY, lsp_types::CallHierarchyPrepareRequest>(handlers::handle_call_hierarchy_prepare)
             .on::<NO_RETRY, lsp_types::CallHierarchyIncomingCallsRequest>(handlers::handle_call_hierarchy_incoming)
             .on::<NO_RETRY, lsp_types::CallHierarchyOutgoingCallsRequest>(handlers::handle_call_hierarchy_outgoing)
